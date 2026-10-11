@@ -1,6 +1,6 @@
 # Инструкция по размещению проектов на Mac mini
 
-Обновлено: 9 октября 2026 года, Asia/Almaty. Инструкция для владельца, его коллег и чатов с инструментами разработки. Здесь опубликованы правила работы; адрес подключения и персональный доступ владелец передаёт отдельно.
+Обновлено: 11 октября 2026 года, Asia/Almaty. Инструкция для владельца, его коллег и чатов с инструментами разработки. Здесь опубликованы правила работы; адрес подключения и персональный доступ владелец передаёт отдельно.
 
 ## Что уже работает
 
@@ -65,7 +65,28 @@ cd ~/Desktop/CODEX/SERVER
 
 `/srv/server/deployment` — каталог общей платформы. Существующий `scripts/deploy-local.sh` обновляет платформу и demo; это не универсальный загрузчик произвольного приложения. Общий ingress и backup меняет один координатор, чтобы чаты не перезаписывали настройки друг друга.
 
+## Место на диске, кэш и версии для отката
+
+С 11 октября настроена общая безопасная очистка Docker: каждый день около **04:30 Asia/Almaty**, с задержкой до 10 минут. Build cache приводится к целевым **8 GB (8 000 000 000 bytes)**, когда Docker может его освободить. Во время активной сборки это не жёсткая квота. Настройка работает в Linux через `server-docker-retention.timer`; открытый чат для её исполнения не нужен. Первый запуск успешно прошёл 11 октября без перезапуска сайтов, состояние всех 26 контейнеров и проверки HTTPS/API сохранились.
+
+Для каждого сервиса сохраняются текущий image и **две предыдущие различные принятые версии**. Успех определяется deployment receipt, а не датой сборки. Images всех существующих контейнеров, текущие Compose/env/freeze references, recovery images и явные pins защищены дополнительно. Неизвестные и незавершённые релизы сохраняются до review. При переходе старые защищённые images оставлены; если подтверждённой истории пока меньше двух, новые принятые релизы постепенно её пополняют. Откат image сам по себе не откатывает миграции БД.
+
+Проектный чат обязан ограничить build context через `.dockerignore`, использовать production dependencies и воспроизводимый ARM64 runtime image. После собственных health/HTTP/API/data/rollback проверок записать immutable image ID в свой root-owned manifest:
+
+```sh
+sudo python3 /srv/server/deployment/scripts/maintenance/docker-retention.py record-release \
+  --manifest /etc/server-maintenance/manifests/PROJECT_ID.json \
+  --service SERVICE --image sha256:FULL_64_HEX_IMAGE_ID --release ACCEPTED_RELEASE_ID
+```
+
+Значения заменить реальными; для нового проекта manifest и service/repository регистрирует координатор в общей policy. Команда проверяет работающий Compose project/service/image и атомарно обновляет техническую историю. Она не выполняет deploy и не заменяет разрешение владельца, backup admission или project approval/SHA/WAL guards. Незавершённую приёмку не помечать accepted. Если reviewed caller уже держит operation.lock, передать тот же FD через `BACKUP_OPERATION_LOCK_FD=N` и `pass_fds`; запуск через sudo может закрыть FD, поэтому этот вызов включать внутри уже root-owned runner.
+
+Очистка использует общий `/var/lib/server-backup/operation.lock`, ждёт до 300 секунд при backup/deploy, затем безопасно пропускает запуск. Перед удалениями перепроверяет consumers, immutable IDs и hashes защищённых конфигураций. Volumes, containers, файлы сайтов, БД и локальные/облачные backup не очищаются. Проектные чаты не должны запускать общие `system/image/builder/volume prune` самостоятельно. Дополнительные recovery/base pins снимаются только после согласованного review.
+
+Проверка из Linux: `sudo python3 /srv/server/deployment/scripts/maintenance/docker-retention.py plan` и `status`; расписание — `sudo systemctl list-timers server-docker-retention.timer --no-pager`. Подробный контракт: локальный `docs/DOCKER_RETENTION.md`.
+
 ## Домен и HTTPS
+
 
 Все проекты могут использовать один публичный IP: общий Caddy выбирает приложение по домену.
 
