@@ -1,6 +1,6 @@
 # Инструкция по размещению проектов на Mac mini
 
-Обновлено: 11 октября 2026 года, Asia/Almaty. Инструкция для владельца, его коллег и чатов с инструментами разработки. Здесь опубликованы правила работы; адрес подключения и персональный доступ владелец передаёт отдельно.
+Обновлено: 14 октября 2026 года, Asia/Almaty. Инструкция для владельца, его коллег и чатов с инструментами разработки. Здесь опубликованы правила работы; адрес подключения и персональный доступ владелец передаёт отдельно.
 
 ## Что уже работает
 
@@ -71,6 +71,8 @@ cd ~/Desktop/CODEX/SERVER
 
 Для каждого сервиса сохраняются текущий image и **две предыдущие различные принятые версии**. Успех определяется deployment receipt, а не датой сборки. Images всех существующих контейнеров, текущие Compose/env/freeze references, recovery images и явные pins защищены дополнительно. Неизвестные и незавершённые релизы сохраняются до review. При переходе старые защищённые images оставлены; если подтверждённой истории пока меньше двух, новые принятые релизы постепенно её пополняют. Откат image сам по себе не откатывает миграции БД.
 
+До первой сборки на сервере согласовать с координатором release manifest и хранение пробных образов. Для утверждённых exact repositories и immutable tag patterns пробные образы ограничены **двумя последними различными сборками на компонент**; сборки младше суток, текущие consumers и защищённые откаты сохраняются. Пробный image не считается принятым релизом. Mutable tags не использовать: прежний dangling image теряет доказуемое происхождение и будет защищён как unknown. Другие неизвестные репозитории автоматически не очищаются.
+
 Проектный чат обязан ограничить build context через `.dockerignore`, использовать production dependencies и воспроизводимый ARM64 runtime image. После собственных health/HTTP/API/data/rollback проверок записать immutable image ID в свой root-owned manifest:
 
 ```sh
@@ -81,9 +83,17 @@ sudo python3 /srv/server/deployment/scripts/maintenance/docker-retention.py reco
 
 Значения заменить реальными; для нового проекта manifest и service/repository регистрирует координатор в общей policy. Команда проверяет работающий Compose project/service/image и атомарно обновляет техническую историю. Она не выполняет deploy и не заменяет разрешение владельца, backup admission или project approval/SHA/WAL guards. Незавершённую приёмку не помечать accepted. Если reviewed caller уже держит operation.lock, передать тот же FD через `BACKUP_OPERATION_LOCK_FD=N` и `pass_fds`; запуск через sudo может закрыть FD, поэтому этот вызов включать внутри уже root-owned runner.
 
-Очистка использует общий `/var/lib/server-backup/operation.lock`, ждёт до 300 секунд при backup/deploy, затем безопасно пропускает запуск. Перед удалениями перепроверяет consumers, immutable IDs и hashes защищённых конфигураций. Volumes, containers, файлы сайтов, БД и локальные/облачные backup не очищаются. Проектные чаты не должны запускать общие `system/image/builder/volume prune` самостоятельно. Дополнительные recovery/base pins снимаются только после согласованного review.
+Очистка Docker использует общий `/var/lib/server-backup/operation.lock`, ждёт до 300 секунд при backup/deploy, затем безопасно пропускает запуск. Перед удалениями перепроверяет consumers, immutable IDs и hashes защищённых конфигураций. Этот Docker runner сохраняет volumes, containers, файлы сайтов, БД и backups. Проектные чаты не должны запускать общие `system/image/builder/volume prune` самостоятельно. Дополнительные recovery/base pins снимаются только после согласованного review.
 
 Проверка из Linux: `sudo python3 /srv/server/deployment/scripts/maintenance/docker-retention.py plan` и `status`; расписание — `sudo systemctl list-timers server-docker-retention.timer --no-pager`. Подробный контракт: локальный `docs/DOCKER_RETENTION.md`.
+
+### Завершённые контрольные копии Korea4U
+
+Для согласованных копий Korea4U действует отдельная политика: три последние различные завершённые контрольные точки БД, плюс самая новая копия для каждой защищённой версии сервиса и явные migration pins. Копии младше суток, незавершённые операции и исходные архивы переноса сохраняются. Удаление допускается только после полного совпадения исторической Google-копии по bytes/SHA256; проверенные immutable Restic content IDs позволяют повторно использовать прежний результат. Старая cloud generation вызывает безопасный отказ.
+
+Область удаления — только `database.dump`/`database-before.dump` в непосредственных `task...` подкаталогах K4 backups. Малые receipts/config/runners, файлы сайта, работающая БД, volumes и Google snapshots сохраняются. Старый runner, которому нужен удалённый checkpoint, должен отказать; готовить новую reviewed версию с новой копией, без ослабления SHA/approval/data guards.
+
+Расписание `server-project-backup-retention.timer` — **04:10 Asia/Almaty +0–10 минут**, после backup и перед Docker GC. Фактическую приёмку и состояние проверять в локальном `docs/STATUS.md`; полный контракт — `docs/PROJECT_BACKUP_RETENTION.md`. Ручной запуск выполнять через службу/wrapper, который держит один operation.lock FD при cloud refresh и cleanup. Caller должен оставлять поддержанный typed hash/full-read/TOC receipt и final acceptance/root release registration; новый формат требует adapter/review до использования.
 
 ## Домен и HTTPS
 
